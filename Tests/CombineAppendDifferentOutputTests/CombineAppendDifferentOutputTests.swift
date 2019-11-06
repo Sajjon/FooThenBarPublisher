@@ -1,35 +1,13 @@
 import XCTest
 import Combine
 
-func first__ignoreOutput__flatMap_Empty__Append<P, Q>(fooPublisher: P, barPublisher: Q) -> AnyPublisher<P.Output, Never>
-    where P: Publisher, Q: Publisher,
-    P.Output == Q.Output,
-    P.Failure == Never,
-    Q.Failure == Never
-{
-
-    return fooPublisher
-        .first()
-        .ignoreOutput()
-        .flatMap { _ in Empty<P.Output, Never>() }
-        .append(barPublisher)
-        .eraseToAnyPublisher()
-}
-
-
-func first__filter_excludeAll__append<P, Q>(fooPublisher: P, barPublisher: Q) -> AnyPublisher<P.Output, Never>
-    where P: Publisher, Q: Publisher,
-    P.Output == Q.Output,
-    P.Failure == Never,
-    Q.Failure == Never
-{
-    
-    return fooPublisher
-            .first()
-            .filter { _ in false } // drop all outputs
-            .append(barPublisher)
-            .eraseToAnyPublisher()
-    
+extension Publishers.IgnoreOutput where Upstream.Failure == Never {
+    func andThen<Then>(_ thenPublisher: Then) -> AnyPublisher<Then.Output, Never> where Then: Publisher, Then.Failure == Failure {
+        return
+            flatMap { _ in Empty<Then.Output, Never>(completeImmediately: true) } // same as `init()`
+                .append(thenPublisher)
+                .eraseToAnyPublisher()
+    }
 }
 
 protocol Fruit {
@@ -46,30 +24,14 @@ struct Apple: Fruit {
     let price: Int
 }
 
-typealias FruitPublisher = AnyPublisher<Fruit, Never>
-typealias FooThenBar = (FruitPublisher, FruitPublisher) -> FruitPublisher
-
-
 final class CombineAppendDifferentOutputTests: XCTestCase {
     
+    override func setUp() {
+        super.setUp()
+        continueAfterFailure = false
+    }
+    
     func test___function___first__ignoreOutput__flatMap_Empty__Append() throws {
-        try doTest(first__ignoreOutput__flatMap_Empty__Append)
-    }
-    
-    func test___function____first__filter_excludeAll__append() throws {
-        try doTest(first__filter_excludeAll__append)
-    }
-    
-    static var allTests = [
-        ("test___function___first__ignoreOutput__flatMap_Empty__Append", test___function___first__ignoreOutput__flatMap_Empty__Append),
-        ("test___function____first__filter_excludeAll__append", test___function____first__filter_excludeAll__append),
-        
-    ]
-}
-
-private extension CombineAppendDifferentOutputTests {
-    
-    func doTest(_ fooThenBarMethod: FooThenBar) throws {
         // GIVEN
         // Two publishers `foo` (🍌) and `bar` (🍏)
         let bananaSubject = PassthroughSubject<Banana, Never>()
@@ -78,13 +40,11 @@ private extension CombineAppendDifferentOutputTests {
         var outputtedFruits = [Fruit]()
         let expectation = XCTestExpectation(description: self.debugDescription)
         
-        let cancellable = fooThenBarMethod(
-            bananaSubject.map { $0 as Fruit }.eraseToAnyPublisher(),
-            appleSubject.map { $0 as Fruit }.eraseToAnyPublisher()
-        )
-            .sink(
+        let applesAfterFirstBanana = bananaSubject.first().ignoreOutput().andThen(appleSubject)
+        
+        let cancellable = applesAfterFirstBanana.sink(
                 receiveCompletion: { _ in expectation.fulfill() },
-                receiveValue: { outputtedFruits.append($0) }
+                receiveValue: { outputtedFruits.append($0 as Fruit) }
         )
         
         // WHEN
@@ -114,4 +74,10 @@ private extension CombineAppendDifferentOutputTests {
         XCTAssertEqual(lastApple.price, 5)
         XCTAssertNotNil(cancellable)
     }
+    
+    static var allTests = [
+        ("test___function___first__ignoreOutput__flatMap_Empty__Append", test___function___first__ignoreOutput__flatMap_Empty__Append),
+        
+    ]
 }
+
