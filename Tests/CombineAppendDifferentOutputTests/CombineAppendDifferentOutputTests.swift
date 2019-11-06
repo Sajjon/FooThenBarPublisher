@@ -1,7 +1,11 @@
 import XCTest
 import Combine
 
-extension Publishers.IgnoreOutput where Upstream.Failure == Never {
+protocol BaseForAndThen {}
+extension Publishers.IgnoreOutput: BaseForAndThen {}
+extension Combine.Future: BaseForAndThen {}
+
+extension Publisher where Self: BaseForAndThen, Self.Failure == Never {
     func andThen<Then>(_ thenPublisher: Then) -> AnyPublisher<Then.Output, Never> where Then: Publisher, Then.Failure == Failure {
         return
             flatMap { _ in Empty<Then.Output, Never>(completeImmediately: true) } // same as `init()`
@@ -31,7 +35,39 @@ final class CombineAppendDifferentOutputTests: XCTestCase {
         continueAfterFailure = false
     }
     
-    func test___function___first__ignoreOutput__flatMap_Empty__Append() throws {
+    func testFirst() throws {
+        try doTest { bananaPublisher, applePublisher in
+            bananaPublisher.first().ignoreOutput().andThen(applePublisher)
+        }
+    }
+    
+    func testFuture() throws {
+        var cancellable: Cancellable?
+        try doTest { bananaPublisher, applePublisher in
+            
+            let futureBanana = Future<🍌, Never> { promise in
+                cancellable = bananaPublisher.sink(
+                    receiveCompletion: { _ in },
+                    receiveValue: { value in promise(.success(value)) }
+                )
+            }
+            
+            return futureBanana.andThen(applePublisher)
+        }
+        
+        XCTAssertNotNil(cancellable)
+    }
+    
+    static var allTests = [
+        ("testFirst", testFirst),
+        ("testFuture", testFuture),
+        
+    ]
+}
+
+private extension CombineAppendDifferentOutputTests {
+    
+    func doTest(_ line: UInt = #line, _ fooThenBarMethod: (AnyPublisher<🍌, Never>, AnyPublisher<🍏, Never>) -> AnyPublisher<🍏, Never>) throws {
         // GIVEN
         // Two publishers `foo` (🍌) and `bar` (🍏)
         let bananaSubject = PassthroughSubject<Banana, Never>()
@@ -40,9 +76,11 @@ final class CombineAppendDifferentOutputTests: XCTestCase {
         var outputtedFruits = [Fruit]()
         let expectation = XCTestExpectation(description: self.debugDescription)
         
-        let applesAfterFirstBanana = bananaSubject.first().ignoreOutput().andThen(appleSubject)
-        
-        let cancellable = applesAfterFirstBanana.sink(
+        let cancellable = fooThenBarMethod(
+            bananaSubject.eraseToAnyPublisher(),
+            appleSubject.eraseToAnyPublisher()
+            )
+            .sink(
                 receiveCompletion: { _ in expectation.fulfill() },
                 receiveValue: { outputtedFruits.append($0 as Fruit) }
         )
@@ -64,20 +102,14 @@ final class CombineAppendDifferentOutputTests: XCTestCase {
         // and
         // B: Exactly two apples, more specifically the two last, since when the first Apple (with price 1) is sent, we have not yet received the first (needed and triggering) banana.
         let expectedFruitCount = 2
-        XCTAssertEqual(outputtedFruits.count, expectedFruitCount)
-        XCTAssertTrue(outputtedFruits.allSatisfy({ $0 is 🍏 }))
+        XCTAssertEqual(outputtedFruits.count, expectedFruitCount, line: line)
+        XCTAssertTrue(outputtedFruits.allSatisfy({ $0 is 🍏 }), line: line)
         let apples = outputtedFruits.compactMap { $0 as? 🍏 }
-        XCTAssertEqual(apples.count, expectedFruitCount)
+        XCTAssertEqual(apples.count, expectedFruitCount, line: line)
         let firstApple = try XCTUnwrap(apples.first)
         let lastApple = try XCTUnwrap(apples.last)
-        XCTAssertEqual(firstApple.price, 3)
-        XCTAssertEqual(lastApple.price, 5)
-        XCTAssertNotNil(cancellable)
+        XCTAssertEqual(firstApple.price, 3, line: line)
+        XCTAssertEqual(lastApple.price, 5, line: line)
+        XCTAssertNotNil(cancellable, line: line)
     }
-    
-    static var allTests = [
-        ("test___function___first__ignoreOutput__flatMap_Empty__Append", test___function___first__ignoreOutput__flatMap_Empty__Append),
-        
-    ]
 }
-
